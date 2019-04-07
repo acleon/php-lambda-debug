@@ -1,0 +1,58 @@
+#!/opt/bin/php
+<?php
+
+// This is the request processing loop. Barring unrecoverable failure, this loop runs until the environment shuts down.
+do {
+    // Ask the runtime API for a request to handle.
+    $http_response_body = @file_get_contents('http://'.$_ENV['AWS_LAMBDA_RUNTIME_API'].'/2018-06-01/runtime/invocation/next');
+
+    if (false === $http_response_body) {
+        continue;
+    }
+
+    $function_response = '';
+
+    // Add all the current environment variables to the function response.
+    foreach ($_ENV as $variable => $content) {
+        $function_response .= sprintf('%s=%s'.PHP_EOL, $variable, $content);
+    }
+
+    $function_response .= PHP_EOL;
+
+    // Loop through all the response headers from the HTTP request and add
+    // them to our response. The $http_response_header variable is automatically
+    // created by PHP in the current scope when we use file_get_contents()
+    foreach ($http_response_header as $header) {
+        $function_response .= $header.PHP_EOL;
+
+        $header_part = explode(':', $header);
+
+        // Check for the Lamba-Runtime-Aws-Request-Id header and store the
+        // value separately. We need this later to send our function's response
+        // back to AWS
+        if ($header_part[0] === 'Lambda-Runtime-Aws-Request-Id') {
+            $function_invocation = trim($header_part[1]);
+        }
+    }
+
+    // Add the original HTTP response body (the function payload to) to our
+    // function response
+    $function_response .= PHP_EOL.$http_response_body;
+
+    // Create the runtime API URL to post our function's response back to
+    $response_url = sprintf(
+        'http://%s/2018-06-01/runtime/invocation/%s/response',
+        $_ENV['AWS_LAMBDA_RUNTIME_API'],
+        $function_invocation
+    );
+
+    // Create a stream context from our function response, specifying a
+    // HTTP POST as the method
+    $response_context = stream_context_create(['http' => [
+        'method'  => 'POST',
+        'content' => $function_response,
+    ]]);
+
+    // Send our response to the runtime API
+    file_get_contents($response_url, false, $response_context);
+} while (true);
